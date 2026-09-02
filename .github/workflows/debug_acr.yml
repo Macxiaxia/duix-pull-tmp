@@ -1,0 +1,51 @@
+name: Debug ACR login
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Test 1: docker login with current secrets
+        env:
+          REGISTRY: ${{ secrets.ACR_REGISTRY }}
+          USERNAME: ${{ secrets.ACR_USERNAME }}
+          PASSWORD: ${{ secrets.ACR_PASSWORD }}
+        run: |
+          echo "REGISTRY=$REGISTRY"
+          echo "USERNAME=$USERNAME"
+          echo "PASSWORD length=${#PASSWORD}"
+          echo ""
+          echo "→ docker login"
+          echo "$PASSWORD" | docker login "$REGISTRY" -u "$USERNAME" --password-stdin 2>&1 || echo "LOGIN FAILED"
+          echo ""
+          echo "→ try docker pull (会失败因为没镜像, 但能看出认证状态)"
+          docker pull "$REGISTRY/${{ secrets.ACR_NAMESPACE }}/__test__" 2>&1 | head -3 || true
+          echo ""
+          echo "→ curl /v2/ 直接探测"
+          curl -sS -u "$USERNAME:$PASSWORD" "https://$REGISTRY/v2/" -w "\nHTTP=%{http_code}\n" 2>&1 | head -5
+          echo ""
+          echo "→ curl /v2/_catalog 探测权限"
+          curl -sS -u "$USERNAME:$PASSWORD" "https://$REGISTRY/v2/_catalog" -w "\nHTTP=%{http_code}\n" 2>&1 | head -10
+
+      - name: Test 2: 用阿里云 CLI 探测 (acrs login 方式)
+        env:
+          REGISTRY: ${{ secrets.ACR_REGISTRY }}
+          USERNAME: ${{ secrets.ACR_USERNAME }}
+          PASSWORD: ${{ secrets.ACR_PASSWORD }}
+        run: |
+          echo "=== 用 aliyun CLI login (官方推荐) ==="
+          # 装 aliyun CLI
+          wget -q https://aliyuncli.alicdn.com/aliyun-cli-linux-3.0.251-linux-amd64.tgz -O /tmp/aliyun.tgz 2>&1 | tail -3
+          tar -xzf /tmp/aliyun.tgz -C /tmp/ 2>&1 | tail -3
+          ls /tmp/aliyun 2>&1
+          echo ""
+          echo "=== 改用 ccr registry 直接探测 (公网域名) ==="
+          # 用 curl 模拟 docker login 完整流程
+          echo "Step 1: GET /v2/ 拿 WWW-Authenticate"
+          curl -sS -i "https://$REGISTRY/v2/" 2>&1 | head -20
+          echo ""
+          echo "Step 2: 用 Basic Auth 试一次"
+          curl -sS -u "$USERNAME:$PASSWORD" "https://$REGISTRY/v2/" -w "\nHTTP=%{http_code}\n" 2>&1 | head -3
