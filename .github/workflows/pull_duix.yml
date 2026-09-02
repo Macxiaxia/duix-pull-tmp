@@ -1,0 +1,64 @@
+name: Pull DUIX image and upload as artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_name:
+        description: "Docker image (default: guiji2025/duix.avatar:latest)"
+        required: false
+        default: "guiji2025/duix.avatar:latest"
+        type: string
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Pull image
+        run: |
+          echo "Pulling ${{ inputs.image_name }}"
+          docker pull "${{ inputs.image_name }}"
+          docker images --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}" | head -20
+
+      - name: Save image to tar.gz (split if >90MB due to artifact limit)
+        run: |
+          IMG="${{ inputs.image_name }}"
+          SAFE=$(echo "$IMG" | tr '/:.' '___')
+          TAR="${SAFE}.tar"
+          echo "Saving $IMG → $TAR"
+          docker save -o "$TAR" "$IMG"
+          ls -lh "$TAR"
+          # gzip 进一步压缩 (DUIX 通常 1-3GB, 压缩后 600MB-1.5GB)
+          gzip -f "$TAR"
+          ls -lh "${TAR}.gz"
+
+      - name: Split tar.gz (artifact 单文件 2GB 上限, 保险起见分片)
+        run: |
+          SAFE=$(echo "${{ inputs.image_name }}" | tr '/:.' '___')
+          TAR="${SAFE}.tar.gz"
+          # 用 split 分成 1.9G 每片
+          split -b 1900M "$TAR" "${TAR}.part_"
+          ls -lh "${TAR}.part_"*
+
+      - name: Upload as artifact (retention 7 days)
+        uses: actions/upload-artifact@v4
+        with:
+          name: duix-image
+          path: |
+            *.tar.gz.part_*
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Print summary
+        run: |
+          echo "## DUIX 镜像拉取完成" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- 镜像: \`${{ inputs.image_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- 切片数: $(ls *.tar.gz.part_* | wc -l)" >> $GITHUB_STEP_SUMMARY
+          echo "- 下载链接: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
