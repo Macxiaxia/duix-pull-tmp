@@ -1,36 +1,68 @@
-# duix-pull-tmp (临时仓库 · 自动清理)
+# duix-pull-tmp — 临时仓库（DUIX 镜像拉取 → ACR 中转）
 
-## 用途
-通过 GitHub Actions 在云端拉取 Docker 镜像（突破本机外网封堵），上传为 artifact 供下载。
+## 一次性流程（已自动化）
 
-## 当前任务
-拉取 `guiji2025/duix.avatar:latest` (灵策AI 数字人 DUIX 镜像)
+1. ✅ GHA 在云端 `docker pull guiji2025/duix.avatar:latest` (~4.94 GB)
+2. ✅ 重命名 + 推到 **阿里云 ACR 个人版**（你提供凭据）
+3. ✅ 本机 `docker pull` ACR 地址（国内仓库，国内带宽秒级）
 
-## 使用步骤
+## 你需要做的（一次性，约 5 分钟）
 
-### 1. 触发 workflow
-访问 https://github.com/Macxiaxia/duix-pull-tmp/actions/workflows/pull_duix.yml
-点击 "Run workflow" → 填入镜像名（默认 guiji2025/duix.avatar:latest）→ 绿色按钮运行
+### 第 1 步：建阿里云 ACR 个人版
 
-### 2. 等待完成（约 3-10 分钟）
-在 Actions 页面查看运行日志。
+浏览器打开 https://cr.console.aliyun.com/
 
-### 3. 下载产物
-完成后页面底部 "Artifacts" 区下载 `duix-image.zip`（含分片 tar.gz）
+- 开通容器镜像服务（个人版，**完全免费**）
+- 创建个人版实例 → 设置 Registry 登录密码（**记牢**，只设一次）
+- 创建命名空间（Namespace）：例如 `lingce`
+- 4 个值需要给 Agent：
 
-### 4. 本机合并 + load
+| 字段 | 例子 | 怎么查 |
+|------|------|--------|
+| Registry 地址 | `registry.cn-hangzhou.aliyuncs.com` | ACR 控制台左上角 |
+| Namespace | `lingce` | ACR → 个人版 → 命名空间 |
+| 用户名 | 阿里云账号 ID 或 RAM 子账号 | ACR 控制台 → 访问凭证 |
+| 密码 | 上一步设的固定密码 | （只设一次，要记牢） |
+
+### 第 2 步：填入 GitHub Secrets
+
+打开 https://github.com/Macxiaxia/duix-pull-tmp/settings/secrets/actions
+
+点 "New repository secret"，依次添加 4 个：
+
+- `ACR_REGISTRY` = `registry.cn-hangzhou.aliyuncs.com`（或你的实际地址）
+- `ACR_NAMESPACE` = `lingce`（或你的命名空间）
+- `ACR_USERNAME` = 你的阿里云账号
+- `ACR_PASSWORD` = 你设置的固定密码
+
+### 第 3 步：触发 workflow
+
+打开 https://github.com/Macxiaxia/duix-pull-tmp/actions/workflows/pull_duix.yml
+点 "Run workflow" → 绿色按钮 → 等 5-10 分钟
+
+完成后 README 第一栏会显示推送目标。
+
+### 第 4 步：本机拉取
+
 ```bash
-cd ~/Downloads
-cat duix-image.tar.gz.part_* > duix-image.tar.gz
-gunzip duix-image.tar.gz
-docker load -i duix-image.tar
-docker images | grep duix
+docker login registry.cn-hangzhou.aliyuncs.com
+docker pull registry.cn-hangzhou.aliyuncs.com/lingce/guiji2025_duix_avatar_latest
+docker run -d -p 8080:8080 registry.cn-hangzhou.aliyuncs.com/lingce/guiji2025_duix_avatar_latest
 ```
 
-### 5. 删除此仓库（用完即焚）
-https://github.com/Macxiaxia/duix-pull-tmp/settings → Delete this repository
+### 第 5 步：删除此仓库（用完即焚）
 
-## 不上传到公开 docker registry 的原因
-- guiji2025 是私有 namespace, 公开镜像站不会有副本
-- GHCR 要 auth, 多一步配置
-- artifact 直接下载最简单
+https://github.com/Macxiaxia/duix-pull-tmp/settings → "Delete this repository"
+
+## 为什么用 ACR 中转而不是 GHA artifact
+
+| 方式 | 速度 | 限制 |
+|------|------|------|
+| GHA artifact 下载（**失败**） | 73 KB/s × 19h | 单文件 5GB 上限 |
+| GHCR | 国内被封（本机拉不到） | - |
+| **阿里云 ACR 个人版** | 国内 1Gbps + 免费 | 完美 |
+
+## 不直接用 GHCR 的原因
+
+ghcr.io 走 GitHub IP，国内访问被封。本机 docker pull 不通。
+ACR 国内有 CDN，免费个人版支持完整 docker registry 协议。
