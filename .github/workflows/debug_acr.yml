@@ -8,27 +8,32 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Test docker login
+      - name: Test all ACR login methods
         env:
           REGISTRY: ${{ secrets.ACR_REGISTRY }}
           USERNAME: ${{ secrets.ACR_USERNAME }}
           PASSWORD: ${{ secrets.ACR_PASSWORD }}
+          NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
         run: |
           echo "REGISTRY=$REGISTRY"
+          echo "NAMESPACE=$NAMESPACE"
           echo "USERNAME=$USERNAME"
           echo "PASSWORD length=${#PASSWORD}"
           echo ""
-          echo "[1] docker login"
-          echo "$PASSWORD" | docker login "$REGISTRY" -u "$USERNAME" --password-stdin 2>&1 || echo "LOGIN FAILED"
+          echo "[1] docker login current"
+          echo "$PASSWORD" | docker login "$REGISTRY" -u "$USERNAME" --password-stdin 2>&1 || true
           echo ""
-          echo "[2] curl /v2/ with basic auth"
-          curl -sS -u "$USERNAME:$PASSWORD" "https://$REGISTRY/v2/" -w "\nHTTP=%{http_code}\n" 2>&1
+          echo "[2] curl /v2/ -W status code"
+          curl -sS -u "$USERNAME:$PASSWORD" "https://$REGISTRY/v2/" -w "HTTP=%{http_code}\n" 2>&1 | head -5
           echo ""
-          echo "[3] curl /v2/_catalog with basic auth"
-          curl -sS -u "$USERNAME:$PASSWORD" "https://$REGISTRY/v2/_catalog" -w "\nHTTP=%{http_code}\n" 2>&1
+          echo "[3] try registry=crpi-public domain"
+          curl -sS -u "$USERNAME:$PASSWORD" "https://crpi-24jpncn6bhgr7pzy.cn-hangzhou.personal.cr.aliyuncs.com/v2/" -w "HTTP=%{http_code}\n" 2>&1 | head -5
           echo ""
-          echo "[4] try different username=account-id"
-          curl -sS -u "1185145838442782:$PASSWORD" "https://$REGISTRY/v2/" -w "\nHTTP=%{http_code}\n" 2>&1
+          echo "[4] try username=full RAM login name"
+          curl -sS -u "openclaw@1185145838442782.onaliyun.com:$PASSWORD" "https://$REGISTRY/v2/" -w "HTTP=%{http_code}\n" 2>&1 | head -5
           echo ""
-          echo "[5] try username=namespace"
-          curl -sS -u "nuomi1122:$PASSWORD" "https://registry.cn-hangzhou.aliyuncs.com/v2/" -w "\nHTTP=%{http_code}\n" 2>&1
+          echo "[5] try registry with namespace subdomain"
+          curl -sS -u "$USERNAME:$PASSWORD" "https://$NAMESPACE.$REGISTRY/v2/" -w "HTTP=%{http_code}\n" 2>&1 | head -5
+          echo ""
+          echo "[6] docker info (network check)"
+          docker info 2>&1 | grep -iE "registry|server" | head -3
