@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Test all ACR login methods
+      - name: Test 5 ACR login approaches
         env:
           REGISTRY: ${{ secrets.ACR_REGISTRY }}
           USERNAME: ${{ secrets.ACR_USERNAME }}
@@ -20,20 +20,23 @@ jobs:
           echo "USERNAME=$USERNAME"
           echo "PASSWORD length=${#PASSWORD}"
           echo ""
-          echo "[1] docker login current"
+          echo "[A] docker login basic"
           echo "$PASSWORD" | docker login "$REGISTRY" -u "$USERNAME" --password-stdin 2>&1 || true
           echo ""
-          echo "[2] curl /v2/ -W status code"
-          curl -sS -u "$USERNAME:$PASSWORD" "https://$REGISTRY/v2/" -w "HTTP=%{http_code}\n" 2>&1 | head -5
+          echo "[B] docker login with crpi-public vpc endpoint"
+          echo "$PASSWORD" | docker login "crpi-24jpncn6bhgr7pzy.cn-hangzhou.personal.cr.aliyuncs.com" -u "$USERNAME" --password-stdin 2>&1 || true
           echo ""
-          echo "[3] try registry=crpi-public domain"
-          curl -sS -u "$USERNAME:$PASSWORD" "https://crpi-24jpncn6bhgr7pzy.cn-hangzhou.personal.cr.aliyuncs.com/v2/" -w "HTTP=%{http_code}\n" 2>&1 | head -5
+          echo "[C] docker login with full RAM name"
+          echo "$PASSWORD" | docker login "$REGISTRY" -u "openclaw@1185145838442782.onaliyun.com" --password-stdin 2>&1 || true
           echo ""
-          echo "[4] try username=full RAM login name"
-          curl -sS -u "openclaw@1185145838442782.onaliyun.com:$PASSWORD" "https://$REGISTRY/v2/" -w "HTTP=%{http_code}\n" 2>&1 | head -5
+          echo "[D] curl /v2/ basic with 4 username variants"
+          for u in "$USERNAME" "openclaw@1185145838442782.onaliyun.com" "$NAMESPACE" "1185145838442782"; do
+            echo "  user=$u"
+            curl -sS -u "$u:$PASSWORD" "https://$REGISTRY/v2/" -w "  HTTP=%{http_code}\n" 2>&1 | head -2
+          done
           echo ""
-          echo "[5] try registry with namespace subdomain"
-          curl -sS -u "$USERNAME:$PASSWORD" "https://$NAMESPACE.$REGISTRY/v2/" -w "HTTP=%{http_code}\n" 2>&1 | head -5
+          echo "[E] aliyun cr GetAuthorizationToken API (official way)"
+          curl -sS -X POST "https://$REGISTRY/v2/" -H "Content-Type: application/json" -w "HTTP=%{http_code}\n" 2>&1 | head -5
           echo ""
-          echo "[6] docker info (network check)"
-          docker info 2>&1 | grep -iE "registry|server" | head -3
+          echo "[F] STS GetCallerIdentity (verify AK valid)"
+          curl -sS "https://sts.aliyuncs.com/?Action=GetCallerIdentity&AccessKeyId=$USERNAME&Format=JSON&SignatureMethod=HMAC-SHA1&SignatureNonce=test&SignatureVersion=1.0&TimeStamp=2026-09-03T00:00:00Z&Version=2015-04-01" -w "HTTP=%{http_code}\n" 2>&1 | head -5
