@@ -13,60 +13,27 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to ACR (try 5 users, succeed on first OK)
+      - name: Test ACR with verbose WWW-Authenticate
         env:
           REGISTRY: ${{ secrets.ACR_REGISTRY }}
-          NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
-          FIXED_PW: ${{ secrets.ACR_FIXED_PASSWORD }}
         run: |
-          set -e
-          echo "Registry=$REGISTRY namespace=$NAMESPACE"
-          SUCCESS=0
-          for user in "1185145838442782" "1185145838442782@nuomi1122" "nuomi1122" "nick7158876044" "1185145838442782@${NAMESPACE}"; do
-            echo ""
-            echo "=== try user=[$user] ==="
-            if echo "$FIXED_PW" | docker login "$REGISTRY" -u "$user" --password-stdin 2>&1 | tee /tmp/login.out; then
-              if grep -qi "login succeeded" /tmp/login.out; then
-                echo ">>> LOGIN SUCCESS user=$user"
-                SUCCESS=1
-                break
-              fi
-            fi
-          done
-          if [ "$SUCCESS" != "1" ]; then
-            echo ""
-            echo "!!! All 5 users failed with FIXED PASSWORD"
-            echo "!!! Trying with ACCESS KEY SECRET instead..."
-            SUCCESS=0
-            for user in "openclaw@1185145838442782.onaliyun.com" "1185145838442782@${NAMESPACE}"; do
-              echo ""
-              echo "=== try AK user=[$user] ==="
-              if echo "${{ secrets.ACR_ACCESS_KEY_SECRET }}" | docker login "$REGISTRY" -u "$user" --password-stdin 2>&1 | tee /tmp/login.out; then
-                if grep -qi "login succeeded" /tmp/login.out; then
-                  echo ">>> LOGIN SUCCESS user=$user (AK)"
-                  SUCCESS=1
-                  break
-                fi
-              fi
-            done
-          fi
-          [ "$SUCCESS" = "1" ] || (echo "ALL FAILED"; exit 1)
+          echo "[1] /v2/ no auth (see what auth method server wants)"
+          curl -sS -i "https://${REGISTRY}/v2/" --max-time 15 2>&1 | head -15
+          echo ""
+          echo "[2] Basic auth nick7158876044 / nuomi@1224"
+          curl -sS -i -u "nick7158876044:nuomi@1224" "https://${REGISTRY}/v2/" --max-time 15 2>&1 | head -15
+          echo ""
+          echo "[3] Basic auth nuomi@1224 / nuomi@1224"
+          curl -sS -i -u "nuomi@1224:nuomi@1224" "https://${REGISTRY}/v2/" --max-time 15 2>&1 | head -15
+          echo ""
+          echo "[4] Basic auth nuomi / nuomi@1224"
+          curl -sS -i -u "nuomi:nuomi@1224" "https://${REGISTRY}/v2/" --max-time 15 2>&1 | head -15
 
-      - name: Pull source image
-        run: |
-          SRC="${{ inputs.image_name }}"
-          if [ -z "$SRC" ]; then SRC="guiji2025/duix.avatar:latest"; fi
-          docker pull "$SRC"
-
-      - name: Retag and push to ACR
+      - name: Docker login (most likely combo)
         env:
           REGISTRY: ${{ secrets.ACR_REGISTRY }}
-          NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
         run: |
-          SRC="${{ inputs.image_name }}"
-          if [ -z "$SRC" ]; then SRC="guiji2025/duix.avatar:latest"; fi
-          SAFE_TAG=$(echo "$SRC" | tr '[:upper:]' '[:lower:]' | sed 's|[/:.]|_|g')
-          TARGET="${REGISTRY}/${NAMESPACE}/${SAFE_TAG}"
-          docker tag "$SRC" "$TARGET"
-          docker push "$TARGET"
-          echo "Pushed to $TARGET"
+          echo "--- nick7158876044 ---"
+          echo "nuomi@1224" | docker login "$REGISTRY" -u "nick7158876044" --password-stdin
+          echo "--- nuomi@1224 ---"
+          echo "nuomi@1224" | docker login "$REGISTRY" -u "nuomi@1224" --password-stdin
