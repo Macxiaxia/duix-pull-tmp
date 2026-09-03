@@ -1,59 +1,53 @@
-name: Pull DUIX image and push to Aliyun ACR
+name: Pull DUIX and push to ACR
 
 on:
   workflow_dispatch:
-    inputs:
-      image_name:
-        description: "Docker image (default: guiji2025/duix.avatar:latest)"
-        required: false
-        default: "guiji2025/duix.avatar:latest"
-        type: string
 
 jobs:
   pull:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Aliyun ACR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ secrets.ACR_REGISTRY }}
-          username: ${{ secrets.ACR_USERNAME }}
-          password: ${{ secrets.ACR_PASSWORD }}
+      - name: Login to ACR via RAM (the only way)
+        env:
+          REGISTRY: ${{ secrets.ACR_REGISTRY }}
+          AK_ID: ${{ secrets.ACR_ACCESS_KEY_ID }}
+          AK_SECRET: ${{ secrets.ACR_ACCESS_KEY_SECRET }}
+        run: |
+          set -e
+          echo "Get ACR temp token via RAM AK/SK..."
+          TOKEN_JSON=$(curl -sS -u "${AK_ID}:${AK_SECRET}" \
+            "https://${REGISTRY}/v2/token?service=${REGISTRY}&scope=repository:push,pull" \
+            --max-time 30)
+          echo "Token resp: ${TOKEN_JSON:0:200}"
+          TOKEN=$(echo "$TOKEN_JSON" | python3 -c "import sys,json;print(json.load(sys.stdin)['token'] or json.load(sys.stdin)['access_token'])")
+          USER=$(echo "$TOKEN_JSON" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('username') or d.get('user') or '')")
+          [ -z "$USER" ] && USER="token"
+          echo "Username=$USER token_len=${#TOKEN}"
+          echo "$TOKEN" | docker login "$REGISTRY" -u "$USER" --password-stdin
 
       - name: Pull source image
         run: |
-          echo "Pulling ${{ inputs.image_name }}"
-          docker pull "${{ inputs.image_name }}"
-          docker images --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}" | head -20
+            SRC="${{ inputs.image_name }}"
+            if [ -z "$SRC" ]; then SRC="guiji2025/duix.avatar:latest"; fi
+            echo "Pulling $SRC ..."
+            docker pull "$SRC"
 
       - name: Retag and push to ACR
+        env:
+          REGISTRY: ${{ secrets.ACR_REGISTRY }}
+          NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
         run: |
           SRC="${{ inputs.image_name }}"
-          # 转小写, 去特殊字符作为 ACR tag
+          if [ -z "$SRC" ]; then SRC="guiji2025/duix.avatar:latest"; fi
           SAFE_TAG=$(echo "$SRC" | tr '[:upper:]' '[:lower:]' | sed 's|[/:.]|_|g')
-          TARGET="${{ secrets.ACR_REGISTRY }}/${{ secrets.ACR_NAMESPACE }}/${SAFE_TAG}"
-          echo "Retag: $SRC -> $TARGET"
+          TARGET="${REGISTRY}/${NAMESPACE}/${SAFE_TAG}"
+          echo "Tag: $SRC -> $TARGET"
           docker tag "$SRC" "$TARGET"
           docker push "$TARGET"
-          echo ""
-          echo "✅ Push done: $TARGET"
-
-      - name: Print summary
-        run: |
-          echo "## DUIX 镜像推送完成 ✅" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- 源: \`${{ inputs.image_name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- 目标: \`${{ secrets.ACR_REGISTRY }}/${{ secrets.ACR_NAMESPACE }}/<自动tag>\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 本机拉取" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "docker pull \${{ secrets.ACR_REGISTRY }}/${{ secrets.ACR_NAMESPACE }}/guiji2025_duix_avatar_latest" >> $GITHUB_STEP_SUMMARY
-          echo "docker run -d -p 8080:8080 \${{ secrets.ACR_REGISTRY }}/${{ secrets.ACR_NAMESPACE }}/guiji2025_duix_avatar_latest" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "✅ Pushed to $TARGET"
