@@ -19,10 +19,6 @@ jobs:
           registry: ${{ secrets.ACR_REGISTRY }}
           username: ${{ secrets.ACR_ALIYUN_USER }}
           password: ${{ secrets.ACR_ALIYUN_PASSWORD }}
-        with:
-          registry: ${{ secrets.ACR_REGISTRY }}
-          username: ${{ secrets.ACR_ALIYUN_USER }}
-          password: ${{ secrets.ACR_ALIYUN_PASSWORD }}
 
       - name: Pull source image
         run: |
