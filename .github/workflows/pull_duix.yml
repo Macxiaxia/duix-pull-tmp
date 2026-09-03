@@ -13,27 +13,39 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Test ACR with verbose WWW-Authenticate
+      - name: Get ACR Bearer token (explicit flow)
         env:
           REGISTRY: ${{ secrets.ACR_REGISTRY }}
+          USERNAME: ${{ secrets.ACR_ALIYUN_USER }}
+          PASSWORD: ${{ secrets.ACR_ALIYUN_PASSWORD }}
         run: |
-          echo "[1] /v2/ no auth (see what auth method server wants)"
-          curl -sS -i "https://${REGISTRY}/v2/" --max-time 15 2>&1 | head -15
-          echo ""
-          echo "[2] Basic auth nick7158876044 / nuomi@1224"
-          curl -sS -i -u "nick7158876044:nuomi@1224" "https://${REGISTRY}/v2/" --max-time 15 2>&1 | head -15
-          echo ""
-          echo "[3] Basic auth nuomi@1224 / nuomi@1224"
-          curl -sS -i -u "nuomi@1224:nuomi@1224" "https://${REGISTRY}/v2/" --max-time 15 2>&1 | head -15
-          echo ""
-          echo "[4] Basic auth nuomi / nuomi@1224"
-          curl -sS -i -u "nuomi:nuomi@1224" "https://${REGISTRY}/v2/" --max-time 15 2>&1 | head -15
+          set -e
+          AUTH_HOST="dockerauth.cn-hangzhou.aliyuncs.com"
+          SERVICE="registry.aliyuncs.com:cn-hangzhou:26842"
+          echo "Fetching Bearer token..."
+          TOKEN_RESP=$(curl -sS -u "${USERNAME}:${PASSWORD}" \
+            "https://${AUTH_HOST}/auth?service=${SERVICE}&scope=repository:nuomi1122:pull,push" \
+            --max-time 30)
+          echo "Token resp: ${TOKEN_RESP:0:200}"
+          TOKEN=$(echo "$TOKEN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+          echo "Token len=${#TOKEN}"
+          echo "$TOKEN" | docker login "$REGISTRY" -u "$USERNAME" --password-stdin
 
-      - name: Docker login (most likely combo)
+      - name: Pull source image
+        run: |
+          SRC="${{ inputs.image_name }}"
+          if [ -z "$SRC" ]; then SRC="guiji2025/duix.avatar:latest"; fi
+          docker pull "$SRC"
+
+      - name: Retag and push to ACR
         env:
           REGISTRY: ${{ secrets.ACR_REGISTRY }}
+          NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
         run: |
-          echo "--- nick7158876044 ---"
-          echo "nuomi@1224" | docker login "$REGISTRY" -u "nick7158876044" --password-stdin
-          echo "--- nuomi@1224 ---"
-          echo "nuomi@1224" | docker login "$REGISTRY" -u "nuomi@1224" --password-stdin
+          SRC="${{ inputs.image_name }}"
+          if [ -z "$SRC" ]; then SRC="guiji2025/duix.avatar:latest"; fi
+          SAFE_TAG=$(echo "$SRC" | tr '[:upper:]' '[:lower:]' | sed 's|[/:.]|_|g')
+          TARGET="${REGISTRY}/${NAMESPACE}/${SAFE_TAG}"
+          docker tag "$SRC" "$TARGET"
+          docker push "$TARGET"
+          echo "Pushed to $TARGET"
