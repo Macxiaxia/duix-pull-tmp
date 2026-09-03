@@ -1,0 +1,39 @@
+name: Network debug ACR
+
+on:
+  workflow_dispatch:
+
+jobs:
+  netcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Test network from GHA runner to ACR
+        run: |
+          echo "[1] DNS lookup"
+          for host in registry.cn-hangzhou.aliyuncs.com crpi-24jpncn6bhgr7pzy.cn-hangzhou.personal.cr.aliyuncs.com cr.console.aliyun.com hub.docker.com; do
+            echo -n "  $host: "
+            getent hosts "$host" 2>&1 | head -1 || echo "DNS FAIL"
+          done
+
+          echo ""
+          echo "[2] TCP connect test"
+          for host in registry.cn-hangzhou.aliyuncs.com crpi-24jpncn6bhgr7pzy.cn-hangzhou.personal.cr.aliyuncs.com hub.docker.com; do
+            echo -n "  $host:443 -> "
+            timeout 5 bash -c "</dev/tcp/$host/443" 2>&1 && echo "OPEN" || echo "FAIL"
+          done
+
+          echo ""
+          echo "[3] HTTPS GET (no auth)"
+          for url in "https://registry.cn-hangzhou.aliyuncs.com/v2/" "https://crpi-24jpncn6bhgr7pzy.cn-hangzhou.personal.cr.aliyuncs.com/v2/" "https://hub.docker.com/v2/"; do
+            echo "  GET $url"
+            curl -sS -o /dev/null -w "    HTTP=%{http_code} TIME=%{time_total}\n" --max-time 10 "$url" 2>&1 | head -2
+          done
+
+          echo ""
+          echo "[4] Run is in?"
+          curl -sS "https://api.ipify.org" -w " HTTP=%{http_code}\n" --max-time 5 2>&1 | head -2
+
+          echo ""
+          echo "[5] ACR with Authorization Bearer (Aliyun token endpoint)"
+          curl -sS "https://crpi-24jpncn6bhgr7pzy.cn-hangzhou.personal.cr.aliyuncs.com/v2/" -w "\nHTTP=%{http_code}\n" --max-time 10 2>&1 | head -5
