@@ -10,16 +10,89 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Install aliyun-cli
+        run: |
+          if ! command -v aliyun &> /dev/null; then
+            curl -fsSL https://aliyuncli.alicdn.com/aliyun-cli-linux-3.0.6-amd64.tgz -o /tmp/aliyun.tgz
+            tar -xzf /tmp/aliyun.tgz -C /tmp
+            sudo mv /tmp/aliyun /usr/local/bin/
+          fi
+          aliyun version
 
-      - name: Login to ACR (RAM sub-user full name)
+      - name: Configure RAM credentials
         env:
-          REGISTRY: ${{ secrets.ACR_REGISTRY }}
           AK_ID: ${{ secrets.ACR_ACCESS_KEY_ID }}
           AK_SECRET: ${{ secrets.ACR_ACCESS_KEY_SECRET }}
+          REGION: cn-hangzhou
+        run: |
+          aliyun configure set \
+            --mode AK \
+            --region $REGION \
+            --access-key-id $AK_ID \
+            --access-key-secret $AK_SECRET
+
+      - name: Get ACR temporary token via cr:GetAuthorizationToken
+        id: token
+        env:
+          REGION: cn-hangzhou
+          NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
         run: |
           set -e
-          USER="openclaw@1185145838442782.onaliyun.com"
-          echo "Login user: $USER  registry: $REGISTRY  pw_len=${#AK_SECRET}"
-          echo "$AK_SECRET" | docker login "$REGISTRY" -u "$USER" --password-stdin
+          RESP=$(aliyun cr GetAuthorizationToken --RegionId $REGION --InstanceId crpi-24jpncn6bhgr7pzy --Namespace $NAMESPACE 2>&1)
+          echo "Response: $RESP"
+          TEMP_USER=$(echo "$RESP" | python3 -c "import sys,json
+          try:
+            d=json.load(sys.stdin); print(d.get('TempUsername',''))
+          except: print('')")
+          TEMP_PW=$(echo "$RESP" | python3 -c "import sys,json
+          try:
+            d=json.load(sys.stdin); print(d.get('TempPassword',''))
+          except: print('')")
+          if [ -z "$TEMP_PW" ]; then
+            echo "No TempPassword. Trying without Namespace..."
+            RESP=$(aliyun cr GetAuthorizationToken --RegionId $REGION --InstanceId crpi-24jpncn6bhgr7pzy 2>&1)
+            echo "Resp2: $RESP"
+            TEMP_USER=$(echo "$RESP" | python3 -c "import sys,json
+          try:
+            d=json.load(sys.stdin); print(d.get('TempUsername',''))
+          except: print('')")
+            TEMP_PW=$(echo "$RESP" | python3 -c "import sys,json
+          try:
+            d=json.load(sys.stdin); print(d.get('TempPassword',''))
+          except: print('')")
+          fi
+          echo "user=$TEMP_USER pw_len=${#TEMP_PW}"
+          echo "temp_user=$TEMP_USER" >> $GITHUB_OUTPUT
+          echo "temp_pw=$TEMP_PW" >> $GITHUB_OUTPUT
+
+      - name: Login to ACR with temp token
+        env:
+          REGISTRY: ${{ secrets.ACR_REGISTRY }}
+        run: |
+          USER="${{ steps.token.outputs.temp_user }}"
+          PW="${{ steps.token.outputs.temp_pw }}"
+          if [ -z "$PW" ]; then
+            echo "No temp pw, cannot login"
+            exit 1
+          fi
+          echo "$PW" | docker login "$REGISTRY" -u "$USER" --password-stdin
+
+      - name: Pull source image
+        run: |
+            SRC="${{ inputs.image_name }}"
+            if [ -z "$SRC" ]; then SRC="guiji2025/duix.avatar:latest"; fi
+            echo "Pulling $SRC ..."
+            docker pull "$SRC"
+
+      - name: Retag and push to ACR
+        env:
+          REGISTRY: ${{ secrets.ACR_REGISTRY }}
+          NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
+        run: |
+          SRC="${{ inputs.image_name }}"
+          if [ -z "$SRC" ]; then SRC="guiji2025/duix.avatar:latest"; fi
+          SAFE_TAG=$(echo "$SRC" | tr '[:upper:]' '[:lower:]' | sed 's|[/:.]|_|g')
+          TARGET="${REGISTRY}/${NAMESPACE}/${SAFE_TAG}"
+          docker tag "$SRC" "$TARGET"
+          docker push "$TARGET"
+          echo "Pushed to $TARGET"
