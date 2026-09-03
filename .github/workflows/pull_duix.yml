@@ -13,23 +13,20 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to ACR via RAM (the only way)
+      - name: Login to ACR (RAM user direct)
         env:
           REGISTRY: ${{ secrets.ACR_REGISTRY }}
           AK_ID: ${{ secrets.ACR_ACCESS_KEY_ID }}
           AK_SECRET: ${{ secrets.ACR_ACCESS_KEY_SECRET }}
+          NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
         run: |
           set -e
-          echo "Get ACR temp token via RAM AK/SK..."
-          TOKEN_JSON=$(curl -sS -u "${AK_ID}:${AK_SECRET}" \
-            "https://${REGISTRY}/v2/token?service=${REGISTRY}&scope=repository:push,pull" \
-            --max-time 30)
-          echo "Token resp: ${TOKEN_JSON:0:200}"
-          TOKEN=$(echo "$TOKEN_JSON" | python3 -c "import sys,json;print(json.load(sys.stdin)['token'] or json.load(sys.stdin)['access_token'])")
-          USER=$(echo "$TOKEN_JSON" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('username') or d.get('user') or '')")
-          [ -z "$USER" ] && USER="token"
-          echo "Username=$USER token_len=${#TOKEN}"
-          echo "$TOKEN" | docker login "$REGISTRY" -u "$USER" --password-stdin
+          # Aliyun ACR personal: user = "<account_id>@<namespace>", password = RAM AccessKey Secret
+          # We need the Aliyun account ID, not the AccessKey ID
+          ACCOUNT_ID="1185145838442782"
+          USER="${ACCOUNT_ID}@${NAMESPACE}"
+          echo "Login user: $USER  registry: $REGISTRY  password_len=${#AK_SECRET}"
+          echo "$AK_SECRET" | docker login "$REGISTRY" -u "$USER" --password-stdin
 
       - name: Pull source image
         run: |
@@ -50,4 +47,4 @@ jobs:
           echo "Tag: $SRC -> $TARGET"
           docker tag "$SRC" "$TARGET"
           docker push "$TARGET"
-          echo "✅ Pushed to $TARGET"
+          echo "Pushed to $TARGET"
