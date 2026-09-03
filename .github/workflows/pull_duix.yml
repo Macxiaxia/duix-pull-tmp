@@ -10,79 +10,53 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install aliyun-cli
-        run: |
-          if ! command -v aliyun &> /dev/null; then
-            curl -fsSL https://aliyuncli.alicdn.com/aliyun-cli-linux-3.0.6-amd64.tgz -o /tmp/aliyun.tgz
-            tar -xzf /tmp/aliyun.tgz -C /tmp
-            sudo mv /tmp/aliyun /usr/local/bin/
-          fi
-          aliyun version
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Configure RAM credentials
-        env:
-          AK_ID: ${{ secrets.ACR_ACCESS_KEY_ID }}
-          AK_SECRET: ${{ secrets.ACR_ACCESS_KEY_SECRET }}
-          REGION: cn-hangzhou
-        run: |
-          aliyun configure set \
-            --mode AK \
-            --region $REGION \
-            --access-key-id $AK_ID \
-            --access-key-secret $AK_SECRET
-
-      - name: Get ACR temporary token via cr:GetAuthorizationToken
-        id: token
-        env:
-          REGION: cn-hangzhou
-          NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
-        run: |
-          set -e
-          RESP=$(aliyun cr GetAuthorizationToken --RegionId $REGION --InstanceId crpi-24jpncn6bhgr7pzy --Namespace $NAMESPACE 2>&1)
-          echo "Response: $RESP"
-          TEMP_USER=$(echo "$RESP" | python3 -c "import sys,json
-          try:
-            d=json.load(sys.stdin); print(d.get('TempUsername',''))
-          except: print('')")
-          TEMP_PW=$(echo "$RESP" | python3 -c "import sys,json
-          try:
-            d=json.load(sys.stdin); print(d.get('TempPassword',''))
-          except: print('')")
-          if [ -z "$TEMP_PW" ]; then
-            echo "No TempPassword. Trying without Namespace..."
-            RESP=$(aliyun cr GetAuthorizationToken --RegionId $REGION --InstanceId crpi-24jpncn6bhgr7pzy 2>&1)
-            echo "Resp2: $RESP"
-            TEMP_USER=$(echo "$RESP" | python3 -c "import sys,json
-          try:
-            d=json.load(sys.stdin); print(d.get('TempUsername',''))
-          except: print('')")
-            TEMP_PW=$(echo "$RESP" | python3 -c "import sys,json
-          try:
-            d=json.load(sys.stdin); print(d.get('TempPassword',''))
-          except: print('')")
-          fi
-          echo "user=$TEMP_USER pw_len=${#TEMP_PW}"
-          echo "temp_user=$TEMP_USER" >> $GITHUB_OUTPUT
-          echo "temp_pw=$TEMP_PW" >> $GITHUB_OUTPUT
-
-      - name: Login to ACR with temp token
+      - name: Login to ACR (try 5 users, succeed on first OK)
         env:
           REGISTRY: ${{ secrets.ACR_REGISTRY }}
+          NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
+          FIXED_PW: ${{ secrets.ACR_FIXED_PASSWORD }}
         run: |
-          USER="${{ steps.token.outputs.temp_user }}"
-          PW="${{ steps.token.outputs.temp_pw }}"
-          if [ -z "$PW" ]; then
-            echo "No temp pw, cannot login"
-            exit 1
+          set -e
+          echo "Registry=$REGISTRY namespace=$NAMESPACE"
+          SUCCESS=0
+          for user in "1185145838442782" "1185145838442782@nuomi1122" "nuomi1122" "nick7158876044" "1185145838442782@${NAMESPACE}"; do
+            echo ""
+            echo "=== try user=[$user] ==="
+            if echo "$FIXED_PW" | docker login "$REGISTRY" -u "$user" --password-stdin 2>&1 | tee /tmp/login.out; then
+              if grep -qi "login succeeded" /tmp/login.out; then
+                echo ">>> LOGIN SUCCESS user=$user"
+                SUCCESS=1
+                break
+              fi
+            fi
+          done
+          if [ "$SUCCESS" != "1" ]; then
+            echo ""
+            echo "!!! All 5 users failed with FIXED PASSWORD"
+            echo "!!! Trying with ACCESS KEY SECRET instead..."
+            SUCCESS=0
+            for user in "openclaw@1185145838442782.onaliyun.com" "1185145838442782@${NAMESPACE}"; do
+              echo ""
+              echo "=== try AK user=[$user] ==="
+              if echo "${{ secrets.ACR_ACCESS_KEY_SECRET }}" | docker login "$REGISTRY" -u "$user" --password-stdin 2>&1 | tee /tmp/login.out; then
+                if grep -qi "login succeeded" /tmp/login.out; then
+                  echo ">>> LOGIN SUCCESS user=$user (AK)"
+                  SUCCESS=1
+                  break
+                fi
+              fi
+            done
           fi
-          echo "$PW" | docker login "$REGISTRY" -u "$USER" --password-stdin
+          [ "$SUCCESS" = "1" ] || (echo "ALL FAILED"; exit 1)
 
       - name: Pull source image
         run: |
-            SRC="${{ inputs.image_name }}"
-            if [ -z "$SRC" ]; then SRC="guiji2025/duix.avatar:latest"; fi
-            echo "Pulling $SRC ..."
-            docker pull "$SRC"
+          SRC="${{ inputs.image_name }}"
+          if [ -z "$SRC" ]; then SRC="guiji2025/duix.avatar:latest"; fi
+          docker pull "$SRC"
 
       - name: Retag and push to ACR
         env:
