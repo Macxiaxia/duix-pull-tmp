@@ -13,38 +13,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to ACR (RAM user direct)
+      - name: Login to ACR (RAM sub-user full name)
         env:
           REGISTRY: ${{ secrets.ACR_REGISTRY }}
           AK_ID: ${{ secrets.ACR_ACCESS_KEY_ID }}
           AK_SECRET: ${{ secrets.ACR_ACCESS_KEY_SECRET }}
-          NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
         run: |
           set -e
-          # Aliyun ACR personal: user = "<account_id>@<namespace>", password = RAM AccessKey Secret
-          # We need the Aliyun account ID, not the AccessKey ID
-          ACCOUNT_ID="1185145838442782"
-          USER="${ACCOUNT_ID}@${NAMESPACE}"
-          echo "Login user: $USER  registry: $REGISTRY  password_len=${#AK_SECRET}"
+          USER="openclaw@1185145838442782.onaliyun.com"
+          echo "Login user: $USER  registry: $REGISTRY  pw_len=${#AK_SECRET}"
           echo "$AK_SECRET" | docker login "$REGISTRY" -u "$USER" --password-stdin
-
-      - name: Pull source image
-        run: |
-            SRC="${{ inputs.image_name }}"
-            if [ -z "$SRC" ]; then SRC="guiji2025/duix.avatar:latest"; fi
-            echo "Pulling $SRC ..."
-            docker pull "$SRC"
-
-      - name: Retag and push to ACR
-        env:
-          REGISTRY: ${{ secrets.ACR_REGISTRY }}
-          NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
-        run: |
-          SRC="${{ inputs.image_name }}"
-          if [ -z "$SRC" ]; then SRC="guiji2025/duix.avatar:latest"; fi
-          SAFE_TAG=$(echo "$SRC" | tr '[:upper:]' '[:lower:]' | sed 's|[/:.]|_|g')
-          TARGET="${REGISTRY}/${NAMESPACE}/${SAFE_TAG}"
-          echo "Tag: $SRC -> $TARGET"
-          docker tag "$SRC" "$TARGET"
-          docker push "$TARGET"
-          echo "Pushed to $TARGET"
